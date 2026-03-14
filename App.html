@@ -1,0 +1,441 @@
+<script>
+  const state = {
+    activeTab: "pending",
+    categories: [],
+    statusItems: [],
+    statusOptions: [],
+    headingButtons: [],
+    events: [],
+    selectedEventId: null,
+    statuses: {},
+  };
+
+  const elements = {};
+
+  document.addEventListener("DOMContentLoaded", function() {
+    bindElements_();
+    bindEvents_();
+    loadInitialData_();
+  });
+
+  function bindElements_() {
+    elements.todayLabel = document.querySelector("#todayLabel");
+    elements.pendingCount = document.querySelector("#pendingCount");
+    elements.selectedLabel = document.querySelector("#selectedLabel");
+    elements.categoryInput = document.querySelector("#categoryInput");
+    elements.nameInput = document.querySelector("#nameInput");
+    elements.dateInput = document.querySelector("#dateInput");
+    elements.memoInput = document.querySelector("#memoInput");
+    elements.eventForm = document.querySelector("#eventForm");
+    elements.reloadButton = document.querySelector("#reloadButton");
+    elements.messageBanner = document.querySelector("#messageBanner");
+    elements.eventList = document.querySelector("#eventList");
+    elements.eventCardTemplate = document.querySelector("#eventCardTemplate");
+    elements.clearSelectionButton = document.querySelector("#clearSelectionButton");
+    elements.eventDetail = document.querySelector("#eventDetail");
+    elements.statusGrid = document.querySelector("#statusGrid");
+    elements.statusCardTemplate = document.querySelector("#statusCardTemplate");
+    elements.headingButtons = document.querySelector("#headingButtons");
+    elements.notesInput = document.querySelector("#notesInput");
+    elements.findingsInput = document.querySelector("#findingsInput");
+    elements.nextActionsInput = document.querySelector("#nextActionsInput");
+    elements.draftPanel = document.querySelector("#draftPanel");
+    elements.aiDraftOutput = document.querySelector("#aiDraftOutput");
+    elements.generateDraftButton = document.querySelector("#generateDraftButton");
+    elements.copyDraftButton = document.querySelector("#copyDraftButton");
+    elements.completeButton = document.querySelector("#completeButton");
+    elements.tabButtons = Array.prototype.slice.call(document.querySelectorAll("[data-tab]"));
+    elements.panels = Array.prototype.slice.call(document.querySelectorAll("[data-panel]"));
+  }
+
+  function bindEvents_() {
+    elements.tabButtons.forEach(function(button) {
+      button.addEventListener("click", function() {
+        state.activeTab = button.dataset.tab;
+        if (state.activeTab === "record" && !getSelectedEvent_()) {
+          state.activeTab = "pending";
+        }
+        render_();
+      });
+    });
+
+    elements.eventForm.addEventListener("submit", function(event) {
+      event.preventDefault();
+      createEvent_();
+    });
+
+    elements.reloadButton.addEventListener("click", refreshEvents_);
+    elements.clearSelectionButton.addEventListener("click", function() {
+      state.selectedEventId = null;
+      state.activeTab = "pending";
+      render_();
+    });
+
+    [elements.notesInput, elements.findingsInput, elements.nextActionsInput].forEach(function(node) {
+      node.addEventListener("input", function() {
+        elements.aiDraftOutput.value = buildAiDraftClient_();
+      });
+    });
+
+    elements.generateDraftButton.addEventListener("click", function() {
+      elements.draftPanel.open = true;
+      elements.aiDraftOutput.value = buildAiDraftClient_();
+      showMessage_("Gemini 連携用テキストを更新しました");
+    });
+
+    elements.copyDraftButton.addEventListener("click", function() {
+      elements.draftPanel.open = true;
+      elements.aiDraftOutput.value = buildAiDraftClient_();
+      navigator.clipboard.writeText(elements.aiDraftOutput.value)
+        .then(function() { showMessage_("Gemini 連携用テキストをコピーしました"); })
+        .catch(function() { showMessage_("コピーに失敗しました", true); });
+    });
+
+    elements.completeButton.addEventListener("click", completeSelectedEvent_);
+
+    elements.headingButtons.addEventListener("click", function(event) {
+      const button = event.target.closest("[data-heading]");
+      if (!button) return;
+      insertHeading_(elements.notesInput, button.dataset.heading);
+      elements.aiDraftOutput.value = buildAiDraftClient_();
+    });
+  }
+
+  function loadInitialData_() {
+    setLoading_(true);
+    google.script.run
+      .withSuccessHandler(function(data) {
+        state.categories = data.categories || [];
+        state.statusItems = data.statusItems || [];
+        state.statusOptions = data.statusOptions || [];
+        state.headingButtonsConfig = data.headingButtons || [];
+        state.events = data.events || [];
+        elements.todayLabel.textContent = formatDate_(data.today, false);
+        renderCategoryOptions_();
+        renderHeadingButtons_();
+        render_();
+        setLoading_(false);
+      })
+      .withFailureHandler(handleFailure_)
+      .getInitialData();
+  }
+
+  function createEvent_() {
+    const payload = {
+      category: elements.categoryInput.value,
+      userName: elements.nameInput.value,
+      eventDateTime: elements.dateInput.value,
+      memo: elements.memoInput.value,
+    };
+
+    setLoading_(true);
+    google.script.run
+      .withSuccessHandler(function() {
+        elements.eventForm.reset();
+        showMessage_("予定を登録しました");
+        state.activeTab = "pending";
+        refreshEvents_(false);
+      })
+      .withFailureHandler(handleFailure_)
+      .createCalendarEvent(payload);
+  }
+
+  function refreshEvents_(showMessage) {
+    setLoading_(true);
+    google.script.run
+      .withSuccessHandler(function(events) {
+        state.events = events || [];
+        if (!getSelectedEvent_()) {
+          state.selectedEventId = null;
+        }
+        if (showMessage !== false) {
+          showMessage_("未完了予定一覧を更新しました");
+        }
+        render_();
+        setLoading_(false);
+      })
+      .withFailureHandler(handleFailure_)
+      .getPendingEvents();
+  }
+
+  function completeSelectedEvent_() {
+    const event = getSelectedEvent_();
+    if (!event) {
+      showMessage_("対象予定を選択してください。", true);
+      return;
+    }
+
+    const finalRecord = buildFinalRecordClient_();
+    if (!finalRecord.trim()) {
+      showMessage_("支援経過を入力してください。", true);
+      return;
+    }
+
+    const payload = {
+      eventId: event.id,
+      statuses: state.statuses[event.id] || {},
+      notes: elements.notesInput.value,
+      findings: elements.findingsInput.value,
+      nextActions: elements.nextActionsInput.value,
+      aiDraft: elements.aiDraftOutput.value,
+      finalRecord: finalRecord,
+    };
+
+    setLoading_(true);
+    google.script.run
+      .withSuccessHandler(function() {
+        resetRecordInputs_();
+        state.selectedEventId = null;
+        state.activeTab = "pending";
+        showMessage_("支援経過を保存し、予定を完了にしました");
+        refreshEvents_(false);
+      })
+      .withFailureHandler(handleFailure_)
+      .completeEvent(payload);
+  }
+
+  function render_() {
+    normalizeTab_();
+    renderTabs_();
+    renderSummary_();
+    renderEventList_();
+    renderEventDetail_();
+    renderStatusGrid_();
+    elements.aiDraftOutput.value = buildAiDraftClient_();
+    syncDraftPanel_();
+  }
+
+  function normalizeTab_() {
+    if (state.activeTab === "record" && !getSelectedEvent_()) {
+      state.activeTab = "pending";
+    }
+  }
+
+  function renderTabs_() {
+    elements.tabButtons.forEach(function(button) {
+      const active = button.dataset.tab === state.activeTab;
+      button.classList.toggle("is-active", active);
+    });
+    elements.panels.forEach(function(panel) {
+      panel.classList.toggle("is-active", panel.dataset.panel === state.activeTab);
+    });
+  }
+
+  function renderSummary_() {
+    elements.pendingCount.textContent = String(state.events.length);
+    elements.selectedLabel.textContent = getSelectedEvent_() ? getSelectedEvent_().userName : "未選択";
+  }
+
+  function renderCategoryOptions_() {
+    elements.categoryInput.innerHTML = "";
+    state.categories.forEach(function(category) {
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = category;
+      elements.categoryInput.appendChild(option);
+    });
+  }
+
+  function renderHeadingButtons_() {
+    elements.headingButtons.innerHTML = "";
+    state.headingButtonsConfig.forEach(function(label) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip-button";
+      button.dataset.heading = label;
+      button.textContent = label;
+      elements.headingButtons.appendChild(button);
+    });
+  }
+
+  function renderEventList_() {
+    elements.eventList.innerHTML = "";
+    if (!state.events.length) {
+      const empty = document.createElement("p");
+      empty.className = "subtle";
+      empty.textContent = "対象期間内の未完了予定はありません。";
+      elements.eventList.appendChild(empty);
+      return;
+    }
+
+    state.events.forEach(function(item) {
+      const fragment = elements.eventCardTemplate.content.cloneNode(true);
+      fragment.querySelector(".event-card__category").textContent = item.category || "その他";
+      fragment.querySelector(".event-card__title").textContent = item.title;
+      fragment.querySelector(".event-card__time").textContent = formatDate_(item.start, true);
+      fragment.querySelector(".event-card__memo").textContent = item.memo || "事前メモなし";
+      fragment.querySelector("button").addEventListener("click", function() {
+        state.selectedEventId = item.id;
+        state.statuses[item.id] = state.statuses[item.id] || {};
+        state.activeTab = "record";
+        render_();
+      });
+      elements.eventList.appendChild(fragment);
+    });
+  }
+
+  function renderEventDetail_() {
+    const event = getSelectedEvent_();
+    const entries = [
+      ["日時", event ? formatDate_(event.start, true) : "-"],
+      ["カテゴリー", event ? event.category : "-"],
+      ["氏名", event ? event.userName : "-"],
+      ["事前メモ", event ? (event.memo || "-") : "-"],
+    ];
+
+    elements.eventDetail.innerHTML = "";
+    entries.forEach(function(entry) {
+      const dt = document.createElement("dt");
+      const dd = document.createElement("dd");
+      dt.textContent = entry[0];
+      dd.textContent = entry[1];
+      elements.eventDetail.appendChild(dt);
+      elements.eventDetail.appendChild(dd);
+    });
+  }
+
+  function renderStatusGrid_() {
+    const event = getSelectedEvent_();
+    elements.statusGrid.innerHTML = "";
+
+    state.statusItems.forEach(function(item) {
+      const fragment = elements.statusCardTemplate.content.cloneNode(true);
+      fragment.querySelector(".status-card__title").textContent = item;
+      const options = fragment.querySelector(".status-card__options");
+
+      state.statusOptions.forEach(function(option) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "status-button";
+        if (event && state.statuses[event.id] && state.statuses[event.id][item] === option) {
+          button.classList.add("is-selected");
+        }
+        button.textContent = option;
+        button.addEventListener("click", function(clickEvent) {
+          clickEvent.preventDefault();
+          if (!event) {
+            showMessage_("先に未完了予定を選択してください。", true);
+            return;
+          }
+          state.statuses[event.id] = state.statuses[event.id] || {};
+          state.statuses[event.id][item] = option;
+          renderStatusGrid_();
+          elements.aiDraftOutput.value = buildAiDraftClient_();
+        });
+        options.appendChild(button);
+      });
+
+      elements.statusGrid.appendChild(fragment);
+    });
+  }
+
+  function buildAiDraftClient_() {
+    const event = getSelectedEvent_();
+    if (!event) {
+      return "未完了予定を選択すると、Gemini に貼り付ける整形文がここに表示されます。";
+    }
+    const statuses = state.statuses[event.id] || {};
+    const lines = state.statusItems.map(function(item) {
+      return "- " + item + ": " + (statuses[item] || "未入力");
+    });
+
+    return [
+      "以下の内容をもとに、介護・福祉現場向けの支援経過記録を自然な日本語で作成してください。",
+      "",
+      "【対象者】" + event.userName,
+      "【予定】" + event.category,
+      "【日時】" + formatDate_(event.start, true),
+      "【事前メモ】" + (event.memo || "なし"),
+      "",
+      "【状態】",
+      lines.join("\n"),
+      "",
+      "【支援経過メモ】",
+      elements.notesInput.value.trim() || "未入力",
+      "",
+      "【所見】",
+      elements.findingsInput.value.trim() || "未入力",
+      "",
+      "【次回確認事項】",
+      elements.nextActionsInput.value.trim() || "未入力",
+    ].join("\n");
+  }
+
+  function buildFinalRecordClient_() {
+    const event = getSelectedEvent_();
+    if (!event) {
+      return "";
+    }
+
+    const statuses = state.statuses[event.id] || {};
+    const summary = state.statusItems.map(function(item) {
+      return item + ":" + (statuses[item] || "未入力");
+    }).join(" / ");
+
+    return [
+      "【状態】",
+      summary,
+      "",
+      "【支援経過メモ】",
+      elements.notesInput.value.trim() || "未入力",
+      "",
+      "【所見】",
+      elements.findingsInput.value.trim() || "未入力",
+      "",
+      "【次回確認事項】",
+      elements.nextActionsInput.value.trim() || "未入力",
+    ].join("\n");
+  }
+
+  function getSelectedEvent_() {
+    return state.events.filter(function(item) {
+      return item.id === state.selectedEventId;
+    })[0] || null;
+  }
+
+  function resetRecordInputs_() {
+    elements.notesInput.value = "";
+    elements.findingsInput.value = "";
+    elements.nextActionsInput.value = "";
+    elements.aiDraftOutput.value = "";
+  }
+
+  function insertHeading_(textarea, heading) {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const before = textarea.value.slice(0, start);
+    const after = textarea.value.slice(end);
+    const insertion = heading + "\n";
+    textarea.value = before + insertion + after;
+    textarea.focus();
+    textarea.setSelectionRange(start + insertion.length, start + insertion.length);
+  }
+
+  function syncDraftPanel_() {
+    elements.draftPanel.open = state.activeTab === "record" && Boolean(getSelectedEvent_());
+  }
+
+  function formatDate_(value, withTime) {
+    if (!value) return "-";
+    const date = new Date(value);
+    const options = withTime
+      ? { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }
+      : { year: "numeric", month: "2-digit", day: "2-digit" };
+    return new Intl.DateTimeFormat("ja-JP", options).format(date);
+  }
+
+  function showMessage_(message, isError) {
+    elements.messageBanner.hidden = false;
+    elements.messageBanner.textContent = message;
+    elements.messageBanner.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function handleFailure_(error) {
+    setLoading_(false);
+    showMessage_(error && error.message ? error.message : "処理に失敗しました。", true);
+  }
+
+  function setLoading_(loading) {
+    document.body.classList.toggle("loading", loading);
+  }
+</script>

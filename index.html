@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <base target="_top" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <?!= include("Styles"); ?>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Care Flow Console</p>
+          <h1>スケジュール管理</h1>
+          <p class="lead">
+            Google カレンダー `primary` に予定を登録し、未完了予定から記録作成まで一画面で進めます。
+          </p>
+        </div>
+        <div class="hero-stats">
+          <article>
+            <span id="todayLabel">-</span>
+            <p>基準日</p>
+          </article>
+          <article>
+            <span id="pendingCount">0</span>
+            <p>未完了予定</p>
+          </article>
+          <article>
+            <span id="selectedLabel">未選択</span>
+            <p>選択中</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="toolbar">
+        <button class="tab-button is-active" type="button" data-tab="register">予定登録</button>
+        <button class="tab-button" type="button" data-tab="pending">未完了一覧</button>
+        <button class="tab-button" type="button" data-tab="record">記録入力</button>
+      </section>
+
+      <section class="panel tab-panel is-active" data-panel="register">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">SCR-01</p>
+            <h2>新規予定登録</h2>
+          </div>
+        </div>
+
+        <form id="eventForm" class="form-grid">
+          <label>
+            カテゴリー
+            <select id="categoryInput" required></select>
+          </label>
+          <label>
+            氏名
+            <input id="nameInput" type="text" required />
+          </label>
+          <label>
+            日時
+            <input id="dateInput" type="datetime-local" required />
+          </label>
+          <label class="full">
+            事前メモ
+            <textarea id="memoInput" rows="4"></textarea>
+          </label>
+          <div class="actions full">
+            <button class="primary-button" type="submit">カレンダーへ登録</button>
+            <button class="ghost-button" type="reset">入力をリセット</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel tab-panel" data-panel="pending">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">SCR-01</p>
+            <h2>未完了予定一覧</h2>
+          </div>
+          <button id="reloadButton" class="ghost-button" type="button">一覧を更新</button>
+        </div>
+
+        <div id="messageBanner" class="message-banner" hidden></div>
+        <div id="eventList" class="event-list"></div>
+      </section>
+
+      <section class="panel tab-panel" data-panel="record">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">SCR-02</p>
+            <h2>記録入力</h2>
+          </div>
+          <button id="clearSelectionButton" class="ghost-button" type="button">選択解除</button>
+        </div>
+
+        <section class="summary-bar">
+          <dl id="eventDetail" class="summary-list"></dl>
+        </section>
+
+        <section class="record-layout">
+          <section class="card card--wide">
+            <div class="section-head section-head--compact">
+              <div>
+                <h3>状態選択</h3>
+                <p class="subtle">13 項目を押して記録を整える</p>
+              </div>
+            </div>
+            <div id="statusGrid" class="status-grid"></div>
+          </section>
+
+          <section class="card">
+            <div class="section-head section-head--compact">
+              <div>
+                <h3>記録メモ</h3>
+                <p class="subtle">見出しボタンで入力補助</p>
+              </div>
+            </div>
+            <div id="headingButtons" class="chips"></div>
+            <div class="stack">
+              <label>
+                支援経過メモ
+                <textarea id="notesInput" rows="10"></textarea>
+              </label>
+              <label>
+                所見
+                <textarea id="findingsInput" rows="5"></textarea>
+              </label>
+              <label>
+                次回確認事項
+                <textarea id="nextActionsInput" rows="4"></textarea>
+              </label>
+            </div>
+          </section>
+        </section>
+
+        <section class="card draft-card">
+          <details id="draftPanel">
+            <summary class="draft-summary">
+              <div>
+                <h3>Gemini 連携用整形</h3>
+                <p class="subtle">無料運用のため API 送信ではなくコピー方式</p>
+              </div>
+              <span class="draft-toggle">開閉</span>
+            </summary>
+            <div class="draft-body">
+              <textarea id="aiDraftOutput" class="mono" rows="12" readonly></textarea>
+              <div class="actions">
+                <button id="generateDraftButton" class="ghost-button" type="button">整形を更新</button>
+                <button id="copyDraftButton" class="primary-button" type="button">コピー</button>
+                <button id="completeButton" class="success-button" type="button">完了処理</button>
+              </div>
+            </div>
+          </details>
+        </section>
+      </section>
+    </main>
+
+    <template id="eventCardTemplate">
+      <article class="event-card">
+        <div class="event-card__head">
+          <div>
+            <p class="event-card__category"></p>
+            <h3 class="event-card__title"></h3>
+          </div>
+          <time class="event-card__time"></time>
+        </div>
+        <p class="event-card__memo"></p>
+        <button class="ghost-button" type="button">この予定を開く</button>
+      </article>
+    </template>
+
+    <template id="statusCardTemplate">
+      <article class="status-card">
+        <h4 class="status-card__title"></h4>
+        <div class="status-card__options"></div>
+      </article>
+    </template>
+
+    <?!= include("App"); ?>
+  </body>
+</html>
